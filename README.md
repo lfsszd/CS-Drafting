@@ -1,14 +1,18 @@
-# Repository Description
+# Cascade Speculative Drafting
 
-Cascade Speculative Drafting(CS Drafting) is an algorithm improves upon speculative decoding. CS Drafting is a algorithemic improvement; this means that the additional speedup does not require any additioinal training nor will it sacrifice any performance.
+The official implementation for "[Cascade Speculative Drafting for Even Faster LLM Inference](https://arxiv.org/abs/2312.11462)"
+
+Cascade Speculative Drafting (CS Drafting) is an algorithm that improves upon speculative decoding by further speeding up LLM inference through cascades without sacrificing generation quality.
 
 
-# Setup
+## Setup
+
 It's likely that our code is competable with your local environment, so you are welcome to skip to usage section.
 
 Our version of pip package can be found in requirements.txt.
 We run our experiments with python3.9. 
 You can install our environment by using anaconda
+
 ```
 conda create --name csd python=3.9
 conda activate csd
@@ -16,20 +20,23 @@ pip install requirements.txt
 ```
 
 
-# Recreating Our Experiments
+## Recreating Our Experiments
 
 The starting point of the report is main.py which can be run without args for maximum hackability.
 All experiment setting can be adjusted in the config diction in main.py.
 GPU usage can be adjusted by changing the following line in main.py
+
 ```
 usable_devices = [0, 1, 2] * 2
 ```
+
 Each index in the list representing a single process on gpu of the index.
 Note that target model is cached in ./cache, so running each process will cost less than 8GB of memory.
 We recommend using 2 process for each GPU with at least 16gb of memory for higher GPU utiliization.
 
 
-To run experiments with FLAN-T5 on mmlu for SWI(model size) setup, change the config to the following:
+To run experiments with FLAN-T5 on mmlu for SWI (model size) setup, change the config to the following:
+
 ```
 config = {
     'draft_names': ['google/flan-t5-base', 'google/flan-t5-small'],
@@ -43,7 +50,9 @@ config = {
     'sample': False
 }
 ```
-For SWI(previous work)
+
+For SWI (previous work)
+
 ```
 config = {
     'draft_names': ['google/flan-t5-base', 'google/flan-t5-small'],
@@ -59,6 +68,7 @@ config = {
 ```
 
 To run LLAMA-7B on mmlu
+
 ```
 config = {
     'draft_names': ['JackFram/llama-160m'],
@@ -74,13 +84,15 @@ config = {
 ```
 
 To run gsm8k, you can change the dataset field in the config to 
+
 ```
 'dataset': 'gsm8k'
 ```
 
 
 
-# Using CS Drafting for inference
+## Using CS Drafting for Inference
+
 To run csd on your own inputs
 
 ```
@@ -118,3 +130,17 @@ generated_text = tokenizer.batch_decode(res, skip_special_tokens=True)
 ```
 
  
+
+## Citation
+
+The details of this repo are described in the following paper:
+
+```
+@article{chen2023cascade,
+  title={Cascade Speculative Drafting for Even Faster LLM Inference},
+  author={Chen, Ziyi and Yang, Xiaocong and Lin, Jiacheng and Sun, Chenkai and Chen, Yangyi and Chang, Kevin Chen-Chuan and Huang, Jie},
+  journal={arXiv preprint arXiv:2312.11462},
+  year={2023}
+}
+```
+
