@@ -34,7 +34,6 @@ Each index in the list representing a single process on gpu of the index.
 Note that target model is cached in ./cache, so running each process will cost less than 8GB of memory.
 We recommend using 2 process for each GPU with at least 16gb of memory for higher GPU utiliization.
 
-
 To run experiments with FLAN-T5 on mmlu for SWI (model size) setup, change the config to the following:
 
 ```
@@ -87,6 +86,12 @@ To run gsm8k, you can change the dataset field in the config to
 
 ```
 'dataset': 'gsm8k'
+```
+Note that when using two draft models other than mag, the parameter
+in k_matrix is different from the one in the paper. Their relations are the following:
+```
+k_matrix[0][0] = k<sub>11</sub>
+k_matrix[0][1] = k<sub>12</sub> - k_matrix[0][0]
 ```
 
 
