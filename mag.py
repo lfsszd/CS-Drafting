@@ -9,7 +9,24 @@ def _bigram_sampling(input_id, bi_gram_model):
 def torch_index(t, value):
     return (t == value).nonzero(as_tuple=True)[0][0]
 
+# def _fast_n_gram_search_index_legacy(input_ids, encoder_ids, n=1):
+#     matches = (encoder_ids[0] == input_ids[0, -1]).int()
+#     if matches.sum() < 1:
+#         return None
+#     for i in range(2, input_ids.shape[-1] + 1):
+#         new_matches = (encoder_ids[0, :(-1 * (i - 1))] == input_ids[0, -1 * i]).int()
+#         combined_matches = (2 - new_matches == matches[1:]).int()
+#         if combined_matches.sum() < 1:
+#             index = torch_index(torch.cat((torch.tensor([0] * (i - 1), device=torch.device(encoder_ids.device)), matches), dim=-1), 1)
+#             return encoder_ids[:, index:index + n]
+#         else:
+#             matches = combined_matches
+#     index = torch_index(torch.cat((torch.tensor([0] * (encoder_ids.shape[-1] - matches.shape[-1]), device=matches.device), matches), dim=-1), 1)
+#     return encoder_ids[:, index+1:index + n+1]
+
+
 def _fast_n_gram_search_index(input_ids, encoder_ids, n=1):
+    encoder_ids = torch.cat([encoder_ids, input_ids[0, :-1].unsqueeze(0)], dim=-1)
     matches = (encoder_ids[0] == input_ids[0, -1]).int()
     if matches.sum() < 1:
         return None
@@ -23,7 +40,6 @@ def _fast_n_gram_search_index(input_ids, encoder_ids, n=1):
             matches = combined_matches
     index = torch_index(torch.cat((torch.tensor([0] * (encoder_ids.shape[-1] - matches.shape[-1]), device=matches.device), matches), dim=-1), 1)
     return encoder_ids[:, index+1:index + n+1]
-
 
 def draft_sample_k_bn_gram(bigram_list, initial_input, input_ids, k):
     """_summary_

@@ -16,6 +16,7 @@ TIME_COST = {
         'JackFram/llama-68m': 68,
         'JackFram/llama-160m': 160,
         '7b': 70000,
+        'llama': 70000,
     },
     'previous_work': {
         "xxl": 1,
@@ -24,6 +25,19 @@ TIME_COST = {
         "large": 0.11,
     }
 }
+
+
+def crop_past_key_values(past_key_values, maximum_length):
+    new_past = []
+    for idx in range(len(past_key_values)):
+        new_past.append(
+            (
+                past_key_values[idx][0][:, :, :maximum_length, :],
+                past_key_values[idx][1][:, :, :maximum_length, :],
+            )
+        )
+    past_key_values = tuple(new_past)
+    return past_key_values
 
 
 
@@ -82,19 +96,15 @@ class CSDraftingModel(torch.nn.Module):
             self.vocab_size = vocab_size
 
     def cuda(self, device):
-        # print('CSDraftingModel cuda')
-        # print(args)
         self.model.cuda(device)
         self.device = self.model.device
         # return self
     def to(self, device):
         self.model.to(device)
         self.device = self.model.device
-        # return self
     def cpu(self):
         self.model.cpu()
         self.device = self.model.device
-        # return self
 
 
 class CSDraftingMaGModel(CSDraftingModel):
@@ -171,7 +181,8 @@ class CountedCSDraftingEncoderDecoderModel(CSDraftingEncoderDecoderModel):
                 break
     def review(self, initial_input, input_ids, probs, review_index, leniency=1):
         self.forward_count += 1
-        return super().review(initial_input, input_ids, probs, review_index, leniency)
+        res = super().review(initial_input, input_ids, probs, review_index, leniency)
+        return res
     def calculate_time_cost(self):
         res = self.forward_count * self.time_cost
         self.forward_count = 0
@@ -181,11 +192,37 @@ class CountedCSDraftingEncoderDecoderModel(CSDraftingEncoderDecoderModel):
 
 
 
+def torch_index(t, value):
+    temp = t == value
+    match = temp.nonzero(as_tuple=False)[0]
+    res = match[1]
+    return res
+
+
+def torch_index(t, value):
+    all_start = time.time()
+    start = time.time()
+    temp = t == value
+    match = temp.nonzero(as_tuple=False)[0]
+    res = match[1]
+    return res
+
+
+
 class CSDraftingDecoderModel(CSDraftingModel):
     def __init__(self, model, sample=False, name='', vocab_size=32000):
         super().__init__(model, sample, name, vocab_size=vocab_size)
+    def propose(self, initial_input, input_ids, k):
+        input_ids = input_ids.to(self.model.device)
+        for i in range(k):
+            res = self.model(input_ids, use_cache=False)
+            new_token = torch.argmax(res.logits[0, -1, :])
+            input_ids = torch.cat([input_ids, new_token.unsqueeze(0).unsqueeze(0)], dim=1)
+        return input_ids
     def review(self, initial_input, input_ids, probs, review_index, leniency=1):
+        start = time.time()
         target_logits = self.model(input_ids).logits
+        start = time.time()
         prefix_input_ids = input_ids[:, :review_index]
         target_probs = torch.nn.functional.softmax(target_logits, dim=-1)
         probs_new = probs[:, review_index - 1:, :]
@@ -215,25 +252,130 @@ class CSDraftingDecoderModel(CSDraftingModel):
 
 
 
+
+class CSDraftingDecoderModelKVCache(CSDraftingModel):
+    def __init__(self, model, sample=False, name='', vocab_size=32000):
+        super().__init__(model, sample, name, vocab_size=vocab_size)
+        self.past_key_values = None
+        self.past_ids = None
+    @classmethod
+    def longest_common_prefix(cls, a, b):
+        match = a[:, :b.shape[-1]] == b[:, :a.shape[-1]]
+        match_ct = torch_index(torch.cat([match, torch.full((1, 1), False, device=match.device)], dim=-1), False)
+        return match_ct
+    def prepare_input(self, input_ids, review_index):
+        if self.past_key_values is None:
+            return input_ids, None
+        else:
+            longest_common_prefix = self.longest_common_prefix(self.past_ids, input_ids)
+            longest_common_prefix = min(longest_common_prefix, review_index - 1)
+            if longest_common_prefix < 10:
+                self.past_key_values = None
+                self.past_ids = None
+                return input_ids, None
+            new_token_ct = input_ids.shape[-1] - longest_common_prefix
+            need_crop = self.past_ids.shape[-1] - longest_common_prefix > 0
+            if need_crop:
+                new_past_key_values = crop_past_key_values(self.past_key_values, longest_common_prefix)
+                new_past_ids = self.past_ids[:, :longest_common_prefix]
+                self.past_key_values = new_past_key_values
+                self.past_ids = new_past_ids
+            return input_ids[:, longest_common_prefix:], self.past_key_values
+    def post_forward_cache(self, out, whole_input_ids):
+        self.past_key_values = out.past_key_values
+        self.past_ids = whole_input_ids
+        assert self.past_ids.shape[-1] == self.past_key_values[0][0].shape[-2]
+    def review(self, initial_input, input_ids, probs, review_index, leniency=1):
+        start = time.time()
+        cut_input_ids, past_key_values = self.prepare_input(input_ids, review_index)
+        cache_len = 0
+        if past_key_values is not None:
+            cache_len = self.past_ids.shape[-1]
+        out = self.model(cut_input_ids, past_key_values=self.past_key_values, use_cache=True)
+        target_logits = out.logits
+        self.post_forward_cache(out, input_ids)
+        prefix_input_ids = input_ids[:, :review_index]
+        target_probs = torch.nn.functional.softmax(target_logits, dim=-1)
+        probs_new = probs[:, review_index - 1:, :]
+        input_ids = input_ids[:, review_index:]
+        target_index = review_index - 1 - cache_len + 1
+        target_ids = torch.argmax(target_probs, dim=-1)
+        target_ids = torch.concat([input_ids[:, :1], target_ids], dim=-1)
+        target_ids = target_ids[:, target_index:]
+        target_probs = target_probs[:, target_index:, :]
+        target_ids = target_ids.to(input_ids.device)
+        match_ct = 0
+        start = time.time()
+        for i in range(probs_new.shape[1]):
+            if target_ids[0, i] == input_ids[0, i]:
+                match_ct += 1
+                continue
+            else:
+                if leniency > 1 and target_probs[0, i, input_ids[0, i]] > probs_new[0, i, input_ids[0, i]] / leniency:
+                    match_ct += 1
+                    continue
+                else:
+                    i = i - 1
+                    break
+        start = time.time()
+        input_ids = torch.cat([input_ids[:, :i + 1], target_ids[:, i + 1:i + 2]], dim=-1)
+        id_res = torch.concat([prefix_input_ids, input_ids], dim=-1)
+        prob_res = torch.concat([probs[:, :review_index, :], target_probs[:, :i + 1, :]], dim=-2)
+        return id_res, prob_res
+
+
+
 class CountedCSDraftingDecoderModel(CSDraftingDecoderModel):
     def __init__(self, model, sample=False, name='', counter_version='model_parameters', vocab_size=32000):
         super().__init__(model, sample, name)
         self.forward_count = 0
         self.counter_version = counter_version
         time_cost_dict = TIME_COST[counter_version]
+        self.time_cost = 0
         for model_abbr in time_cost_dict:
             if model_abbr in name:
                 self.time_cost = time_cost_dict[model_abbr]
                 break
+        self.wall_time = []
     def review(self, initial_input, input_ids, probs, review_index, leniency=1):
         self.forward_count += 1
-        return super().review(initial_input, input_ids, probs, review_index, leniency)
+        start = time.time()
+        res = super().review(initial_input, input_ids, probs, review_index, leniency)
+        self.wall_time.append(time.time() - start)
+        return res
     def calculate_time_cost(self):
         res = self.forward_count * self.time_cost
         self.forward_count = 0
         return res  
 
 
+
+
+class CountedCSDraftingDecoderModelKVCache(CSDraftingDecoderModelKVCache):
+    def __init__(self, model, sample=False, name='', counter_version='model_parameters', vocab_size=32000):
+        super().__init__(model, sample, name)
+        self.forward_count = 0
+        self.counter_version = counter_version
+        time_cost_dict = TIME_COST[counter_version]
+        self.time_cost = 0
+        for model_abbr in time_cost_dict:
+            if model_abbr in name:
+                self.time_cost = time_cost_dict[model_abbr]
+                break
+        self.wall_time = []
+    def review(self, initial_input, input_ids, probs, review_index, leniency=1):
+        self.forward_count += 1
+        start = time.time()
+        res = super().review(initial_input, input_ids, probs, review_index, leniency)
+        self.wall_time.append(time.time() - start)
+        return res
+    def calculate_time_cost(self):
+        res = self.forward_count * self.time_cost
+        self.forward_count = 0
+        # print('updated!')
+        # print('Name of model: {}'.format(self.name))
+        # print('Wall time: {}'.format(sum(self.wall_time) / len(self.wall_time)))
+        return res  
 
 
 class CountedCSDraftingCachedEncoderDecoderModel(CountedCSDraftingEncoderDecoderModel):

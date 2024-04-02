@@ -14,7 +14,10 @@ def _csd_iteration(draft_list, target_model, initial_input, input_ids, k_matrix,
     ks = k_matrix[0]
     n = len(draft_list)
     cur_input_ids = input_ids
-    cur_probs = torch.zeros([1, 0, target_model.vocab_size], device=target_model.device)
+    if len(draft_list) > 0:
+        cur_probs = torch.zeros([1, 0, target_model.vocab_size], device=draft_list[-1].device)
+    else:
+        cur_probs = torch.zeros([1, 0, target_model.vocab_size], device=target_model.device)
     prev_ids_len = input_ids.shape[1]
     review_index = input_ids.shape[-1]
     for i in range(n):
@@ -24,7 +27,7 @@ def _csd_iteration(draft_list, target_model, initial_input, input_ids, k_matrix,
             cur_k_matrix = k_matrix[i+1:, i+1:]
             new_input_ids, new_probs = _csd_iteration(cur_draft_list, cur_target, initial_input, cur_input_ids, cur_k_matrix, leniency=leniency)
             cur_input_ids = new_input_ids
-            cur_probs = torch.cat([cur_probs, new_probs[:,cur_probs.shape[1]:, :]], dim=1)
+            cur_probs = torch.cat([cur_probs, new_probs[:,cur_probs.shape[1]:, :].to(cur_probs.device)], dim=1)
     if is_first:
         leniency = 1
     accepted_tokens, target_probs = target_model.review(initial_input, cur_input_ids, new_probs, review_index, leniency=leniency)
@@ -53,3 +56,5 @@ def csd(draft_list, target_model, initial_input, input_ids, k_matrix, max_length
                 break
             previous_len = input_ids.shape[-1]
         return input_ids
+
+

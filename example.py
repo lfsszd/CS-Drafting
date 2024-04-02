@@ -20,7 +20,7 @@ mag_model.cuda(device)
 draft_list.append(mag_model)
 
 
-LLAMA_PATH = '/scratch/ziyic2/llama/llama/'
+LLAMA_PATH = '/scratch/your_dir/llama/llama/'
 
 k_matrix = torch.tensor([[5, 10], [0, 10]])
 LLAMA_HF_PATH = LLAMA_PATH + 'hf_7b_chat'

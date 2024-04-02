@@ -5,6 +5,11 @@ The official implementation for "[Cascade Speculative Drafting for Even Faster L
 Cascade Speculative Drafting (CS Drafting) is an algorithm that improves upon speculative decoding by further speeding up LLM inference through cascades without sacrificing generation quality.
 
 
+## Change Log
+4.2.2024 Added KV Cache to reduce latency when generation length is long
+
+
+
 ## Setup
 
 It's likely that our code is competable with your local environment, so you are welcome to skip to usage section.
@@ -103,14 +108,14 @@ To run csd on your own inputs
 ```
 from csd import csd
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoModelForCausalLM
-from model import CSDraftingDecoderModel, get_mag_model
+from model import CountedCSDraftingDecoderModelKVCache, get_mag_model
 
 
 draft_list = []
 draft_names = ['JackFram/llama-160m']
 for draft_name in draft_names:
     hf_model = AutoModelForSeq2SeqLM.from_pretrained(draft_name)
-    model = CSDraftingDecoderModel(hf_model, name=draft_name, counter_version=config['counter_version'])
+    model = CountedCSDraftingDecoderModelKVCache(hf_model, name=draft_name, counter_version=config['counter_version'])
     draft_list.append(model)
 
 _BIGRAM_DIR = './bigram_models/'
@@ -124,7 +129,7 @@ from transformers import LlamaForCausalLM, LlamaTokenizer
 tokenizer = <your hugginface llama tokenizer>
 hf_model = <your hugginface llama model>
 
-target_model = CSDraftingDecoderModel(hf_model, name='llama', vocab_size=32000)
+target_model = CountedCSDraftingDecoderModelKVCache(hf_model, name='llama', vocab_size=32000)
 target_model.cuda(device)
 
 question = '<Your inputs>'
